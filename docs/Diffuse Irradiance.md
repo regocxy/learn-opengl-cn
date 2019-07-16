@@ -1,10 +1,10 @@
 # 漫反射辐照度(Diffuse Irradiance)
 
-IBL(image based lighting)是一种光源收集技术，不像之前的教程那样，光源是直接的可分析的，而IBL是将整个周围环境视为一个大光源。IBL的实现方式通常是从真实环境或3D场景中生成一张立方体贴图(cubemap)，然后我们在反射方程中将每个立方体贴图的像素视作一个光源。使用这种方式，我们可以有效地捕捉环境的全局光照，让物体更好地与环境融合。
+原文 | [Diffuse Irradiance](https://learnopengl.com/PBR/IBL/Diffuse-irradiance)
 
-由于IBL算法可以捕捉环境光照，所以它被认为是环境光(ambient lighting)的一种更加精确的输入方式，甚至可以简单地把它看作全局光照(global ilumination)。当我们把环境光照考虑进PBR中时，物体看起来会更加地物理，因此IBL对PBR非常重要。
+IBL(image based lighting)是一种光源收集技术，不像之前的教程那样，光源是直接的可分析的，而IBL是将周围整个环境视为一个大光源。IBL的实现方式通常是从真实环境或3D场景中生成一张立方体贴图(cubemap)，然后我们在反射方程中将每个立方体贴图的像素视作一个光源。使用这种方式，我们可以有效地捕捉环境的全局光照，让物体更好地与环境融合。
 
-在开始介绍IBL之前，我们先回顾下反射方程：
+由于IBL算法可以捕捉环境光照，所以它被认为是环境光(ambient lighting)的一种更加精确的输入方式，甚至可以简单地把它看作全局光照(global ilumination)。当我们把环境光照考虑进PBR中时，物体看起来会更加地物理，因此IBL对PBR非常重要。在开始介绍IBL之前，我们先回顾下反射方程：
 
 $$L_o(p,\omega_o) = \int\limits_{\Omega} (k_d\frac{c}{\pi} + k_s\frac{DFG}{4(\omega_o \cdot n)(\omega_i \cdot n)})L_i(p,\omega_i) n \cdot \omega_i d\omega_i$$
 
@@ -49,7 +49,7 @@ $$L_o(p,\omega_o) = k_d\frac{c}{\pi} \int\limits_{\Omega} L_i(p,\omega_i) n \cdo
 
 ![](../img/pbr/ibl_irradiance.png)
 
-辐照度贴图的每个像素上存储了卷积结果(在方向$\omega_o$上)，它看起来像是对环境中的颜色和光照取了平均值。在这张环境贴图的任意方向采样，我们就能得到该场景中特定方向的辐照度。
+辐照度贴图的每个像素上存储了卷积结果(在方向$\omega_o$上)，它看起来像是对环境中的颜色和光照取了平均值。在这张环境贴图中对任意方向采样，我们就能得到该场景中特定方向的辐照度。
 
 ## PBR和HDR
 
@@ -61,5 +61,164 @@ $$L_o(p,\omega_o) = k_d\frac{c}{\pi} \int\limits_{\Omega} L_i(p,\omega_i) n \cdo
 
 ## Radiance HDR文件格式
 
-RGBE或Radiance HDR是一种为Radiance渲染系统发明的图像格式，扩展名为.hdr。RGBE文件存储了一个立方体贴图全部6个面的浮点数据，这些数据的动态范围是超过0.0~1.0的。这种文件格式使用了一种技巧去存储浮点数，它不是每个RBG通道32位，而是每个通道8位，并且共享一个8位的指数E(这种存储方式会带来精度上的损失，但是省内存)，所以它使用32位存储一个像素颜色。这种方式工作的非常好，但是需要一个转换程序去把每个颜色值转成其对应的浮点数。
+Radiance HDR或RGBE是一种为Radiance渲染系统发明的图像格式，扩展名为.hdr。RGBE文件存储了一个立方体贴图全部6个面的浮点数据，这些数据的动态范围是超过0.0~1.0的。这种文件格式使用了一种技巧去存储浮点数，它不是每个RBG通道32位，而是每个通道8位，并且共享一个8位的指数E(这种存储方式会带来精度上的损失，但是省内存)，所以它使用32位存储一个像素颜色。这种方式工作的非常好，但是需要一个转换程序去把每个颜色值转成其对应的浮点数。
 
+网上有大量免费的Radiance HDR格式的环境贴图资源，比如[sIBL archive](http://www.hdrlabs.com/sibl/archive.html)，下面是一张来自该网站的样图：
+
+![](../img/pbr/ibl_hdr_radiance.png)
+
+这可能和你想象的不太一样，这张图看起来是扭曲的，并且没有展示我们之前看到的立方体贴图的6个面。这张环境贴图是从一个球体投射到一个平面上，这样我们可以更容易地将环境信息存储到一张全景图中。不过这也带来了一个小问题，因为大部分可视化信息都集中在水平视图方向，少数分布在顶部和底部。在大部分渲染当中，这是一个可接受的妥协，你会发现大部分有用的光都集中在水平视图方向。
+
+## HDR和stb_image.h
+
+直接加载一张radiance HDR图片需要一些[文件格式](http://radsite.lbl.gov/radiance/refer/Notes/picture_format.html)的知识，虽然这并不困难但还是麻烦。幸运的是，流行的头文件[stb_image.h](https://github.com/nothings/stb/blob/master/stb_image.h)
+支持直接加载randiance HDR图片并以浮点数组的形式输出，这刚好符合我们的需求。把stb_image添加进你的项目中后，加载一张HDR图片如以下代码：
+
+```c++
+#include "stb_image.h"
+[...]
+
+stbi_set_flip_vertically_on_load(true);
+int width, height, nrComponents;
+float *data = stbi_loadf("newport_loft.hdr", &width, &height, &nrComponents, 0);
+unsigned int hdrTexture;
+if (data)
+{
+    glGenTextures(1, &hdrTexture);
+    glBindTexture(GL_TEXTURE_2D, hdrTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGB, GL_FLOAT, data); 
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    stbi_image_free(data);
+}
+else
+{
+    std::cout << "Failed to load HDR image." << std::endl;
+}  
+```
+stb_image.h自动将HDR值映射到一张浮点数列表中：默认每个通道32位，每个颜色3个通道。这些正是我们把全景图存到一张2D浮点纹理中所选要的。
+
+## 从全景图到立方体贴图
+
+直接使用全景图看起来是可能的，但是相比采样立方体贴图会更耗性能。因为在本次教程中，我们先将全景图转到立方体贴图再做进一步处理。
+注意在处理过程中，我们也展示了如何对全景图进行采样，你可以自由地选择你所喜欢的方案。
+
+将一张全景图转成立方体贴图，我们需要先渲染一个单位立方体，再将全景图投射到立方体内侧的面，最后将立方体内侧面上的6张图片作为立方体贴图的面。
+
+下面是渲染立方体的顶点着色器，并且把localPos传递给片段着色器，当作采样的向量：
+
+```c++
+#version 330 core
+layout (location = 0) in vec3 aPos;
+
+out vec3 localPos;
+
+uniform mat4 projection;
+uniform mat4 view;
+
+void main()
+{
+    localPos = aPos;  
+    gl_Position =  projection * view * vec4(localPos, 1.0);
+}
+```
+我们使用片段着色器给立方体上色，就像把全景图整齐地折叠成一个立方体一样。为了达到这个目的，我们需要将立方体的localPos插值得到的值最为片段着色器的采样向量，然后结合一些三角函数的魔数，对全景图像进行采样，就像采样立方体贴图一样。我们直接将结果存到立方体的面上，下面是我们要做的全部代码：
+
+```glsl
+#version 330 core
+out vec4 FragColor;
+in vec3 localPos;
+
+uniform sampler2D equirectangularMap;
+
+const vec2 invAtan = vec2(0.1591, 0.3183);
+vec2 SampleSphericalMap(vec3 v)
+{
+    vec2 uv = vec2(atan(v.z, v.x), asin(v.y));
+    uv *= invAtan;
+    uv += 0.5;
+    return uv;
+}
+
+void main()
+{		
+    vec2 uv = SampleSphericalMap(normalize(localPos)); // make sure to normalize localPos
+    vec3 color = texture(equirectangularMap, uv).rgb;
+    
+    FragColor = vec4(color, 1.0);
+}
+```
+给定一张HDR的全景图，如果将立方体渲染在场景中心，那么你看到的应该像下面这样：
+
+![](../img/pbr/ibl_equirectangular_projection.png)
+
+上面展示了全景图映射到一个立方体上，但是到目前为止，我们还没有将HDR图像渲染到一张立方体贴图上。为了做到这一点，我们需要使用framebuffer来存储结果，并且渲染同一个立方体6次，每次渲染一个面：
+
+```c++
+unsigned int captureFBO, captureRBO;
+glGenFramebuffers(1, &captureFBO);
+glGenRenderbuffers(1, &captureRBO);
+
+glBindFramebuffer(GL_FRAMEBUFFER, captureFBO);
+glBindRenderbuffer(GL_RENDERBUFFER, captureRBO);
+glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, 512, 512);
+glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, captureRBO);  
+```
+当然，我们需要生成一个立方体贴图，并且为6个面分配内存：
+
+```c++
+unsigned int envCubemap;
+glGenTextures(1, &envCubemap);
+glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
+for (unsigned int i = 0; i < 6; ++i)
+{
+    // note that we store each face with 16 bit floating point values
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB16F, 
+                 512, 512, 0, GL_RGB, GL_FLOAT, nullptr);
+}
+glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+```
+接下来，就是获取全景图的2D纹理并渲染到立方体贴图的每个面上。
+
+我不会讨论下面代码的细节，因为在之前的[帧缓冲(framebuffer)](https://learnopengl.com/#!Advanced-OpenGL/Framebuffers)和[点阴影(point shadows)](https://learnopengl.com/#!Advanced-Lighting/Shadows/Point-Shadows)的教程中都有详细的讨论，不过总结一下，就是设置6个不同的视图矩阵(view matrices)看向6个面，给定一个90度fov的透视矩阵(projection matrix)获取整个面，然后对一个立方体渲染6次，并把结果存储到一个浮点帧缓冲中。
+
+```c++
+glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
+glm::mat4 captureViews[] = 
+{
+   glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 1.0f,  0.0f,  0.0f), glm::vec3(0.0f, -1.0f,  0.0f)),
+   glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(-1.0f,  0.0f,  0.0f), glm::vec3(0.0f, -1.0f,  0.0f)),
+   glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f,  1.0f,  0.0f), glm::vec3(0.0f,  0.0f,  1.0f)),
+   glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f, -1.0f,  0.0f), glm::vec3(0.0f,  0.0f, -1.0f)),
+   glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f,  0.0f,  1.0f), glm::vec3(0.0f, -1.0f,  0.0f)),
+   glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f,  0.0f, -1.0f), glm::vec3(0.0f, -1.0f,  0.0f))
+};
+
+// convert HDR equirectangular environment map to cubemap equivalent
+equirectangularToCubemapShader.use();
+equirectangularToCubemapShader.setInt("equirectangularMap", 0);
+equirectangularToCubemapShader.setMat4("projection", captureProjection);
+glActiveTexture(GL_TEXTURE0);
+glBindTexture(GL_TEXTURE_2D, hdrTexture);
+
+glViewport(0, 0, 512, 512); // don't forget to configure the viewport to the capture dimensions.
+glBindFramebuffer(GL_FRAMEBUFFER, captureFBO);
+for (unsigned int i = 0; i < 6; ++i)
+{
+    equirectangularToCubemapShader.setMat4("view", captureViews[i]);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, 
+                           GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, envCubemap, 0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    renderCube(); // renders a 1x1 cube
+}
+glBindFramebuffer(GL_FRAMEBUFFER, 0);  
+```
