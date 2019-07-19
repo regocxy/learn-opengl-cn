@@ -50,7 +50,7 @@ vec3 indirectSpecular = prefilteredColor * (F * envBRDF.x + envBRDF.y)
 
 以上，应该能让你对Epic Games的split sum approximation近似求解反射方程的间接镜面反射部分，有了一个大致的了解。现在让我们尝试自己构建预卷积部分。
 
-## Pre-filtering an HDR 环境贴图
+## Pre-filtering一张HDR环境贴图
 
 对环境贴图进行pre-filtering与对辐照度贴图进行卷积非常相似。不同之处在于，我们现在考虑了粗糙度，并按顺序将反射结果存在多级pre-filtered mipmap中。
 
@@ -120,7 +120,7 @@ $$O = \int\limits_{a}^{b} f(x) dx = \frac{1}{N} \sum_{i=0}^{N-1} \frac{f(x)}{pdf
 
 在本教程中，给定一组随机的低差序列，我们将使用基于准蒙特卡洛的重要性采样，来预计算反射方程的间接镜面反射部分。我们将使用的序列叫做Hammersley序列，[Holger Dammertz](http://holger.dammertz.org/stuff/notes_HammersleyOnHemisphere.html)对此进行过详细描述。Hammersley序列基于Van Der Corpus序列，它将二进制表达式镜像到小数点右边，而这个二进制数的值就是最终的结果。
 
-使用一些简单的技巧，就可以在shader中非常有效地生成Van Der Corpus序列，我们将使用它来获得一个Hammersley序列，其中$i$是变量，$N$是样本总数量:
+使用一些简单的技巧，就可以在shader中非常有效地生成Van Der Corpus序列，我们将使用它来获得一个Hammersley序列，其中$i$是变量，$N$是样本集的大小:
 
 ```glsl
 float RadicalInverse_VdC(uint bits) 
@@ -138,7 +138,7 @@ vec2 Hammersley(uint i, uint N)
     return vec2(float(i)/float(N), RadicalInverse_VdC(i));
 }  
 ```
-GLSL Hammersley函数给出了总样本集大小为N时样本i的低偏差值。
+GLSL Hammersley函数给出了总样本集大小为N的低偏差值样本i。
 
 !!! Important
 
@@ -172,11 +172,11 @@ GLSL Hammersley函数给出了总样本集大小为N时样本i的低偏差值。
         return vec2(float(i)/float(N), VanDerCorpus(i, 2u));
     }
     ```
-    注意，由于旧硬件中的GLSL循环限制，序列在所有可能的32位上循环。这个版本的性能较差，但是如果您发现自己没有位操作符，那么它可以在所有硬件上工作。
+    注意，在旧硬件中的GLSL循环上限次数可能只有32位。虽然这个版本的性能较差，但是它可以在所有硬件上工作，如果你发现的你的程序中不支持位操作，可以选择这个方法。
 
 ## GGX重要性采样
 
-而不是均匀或随机(蒙特卡洛)生成样本向量积分的半球Ω我们会偏向生成样本向量的一般反射方向microsurface一半向量基于表面的粗糙度。采样过程将与我们之前看到的类似:开始一个大的循环，生成一个随机(低偏差)的序列值，利用序列值在切线空间中生成一个样本向量，转换到世界空间并采样场景的亮度。不同的是，我们现在使用一个低偏差序列值作为输入来生成一个样本向量:
+ 不同于之前在半球域$\Omega$内使用均匀随机的样本向量进行积分，这次我们生成的是有偏的样本向量，这些向量偏向基于表面粗糙度生成的微表面半角向量。采样过程将与我们之前看到的类似:开始一个大的循环，生成一组随机(低偏差)的序列值，利用序列值在切线空间中生成一个样本向量，将其转换到世界空间，然后采样场景内的辐射。不同的是，我们现在使用了一组低偏差序列值作为输入来生成一个样本向量:
 
 ```glsl
 const uint SAMPLE_COUNT = 4096u;
@@ -184,7 +184,7 @@ for(uint i = 0u; i < SAMPLE_COUNT; ++i)
 {
     vec2 Xi = Hammersley(i, SAMPLE_COUNT);   
 ```
-此外，为了建立一个样本向量，我们需要一些方法来定向和偏置样本向量到一些表面粗糙度的镜面波瓣。我们可以采用理论教程中描述的NDF，并结合Epic Games中描述的球形样本向量过程中的GGX NDF:
+此外，为了得到一个样本向量，我们需要一些方法来定向和偏置样本朝向由表面粗糙度决定的镜面波瓣。我们可以采用[理论](https://learnopengl.com/#!PBR/Theory)教程中描述的NDF，并结合球坐标系下的GGX NDF，以下代码来自Epic Games:
 
 ```glsl
 vec3 ImportanceSampleGGX(vec2 Xi, vec3 N, float roughness)
@@ -210,9 +210,9 @@ vec3 ImportanceSampleGGX(vec2 Xi, vec3 N, float roughness)
     return normalize(sampleVec);
 }
 ```
-这就给出了一个基于输入粗糙度和低差序列值Xi的样本向量，它在一定程度上围绕着期望微表面的半矢量。注意Epic Games基于迪士尼最初的PBR研究，使用了平方粗糙度来获得更好的视觉效果。
+这就给出了一个基于输入粗糙度和低差序列值$X_i$的样本向量，它基本上朝向我们预期的微表面的半角向量。注意，Epic Games是基于迪士尼最初的那份PBR研究，并且使用了粗糙度的平方来获得更好的视觉效果。
 
-通过定义低差分Hammersley序列和样本生成，我们可以最终完成预滤波卷积着色器:
+最后，声明下Hammersley函数和ImportanceSampleGGX函数，我们完成了pre-filter卷积着色器:
 
 ```glsl
 #version 330 core
@@ -255,11 +255,13 @@ void main()
     FragColor = vec4(prefilteredColor, 1.0);
 }  
 ```
-我们根据预过滤器cubemap(从0.0到1.0)的每个mipmap级别上不同的输入粗糙度对环境进行预过滤，并将结果存储为预过滤的颜色。得到的预滤颜色除以总样本重量，其中对最终结果影响较小的样本(对于较小的NdotL)对最终重量的贡献较小。
+>译者注：代码更符合$E[X]=\sum\limits_{i=0}^{N-1}x_ip_i$，也就是说作者求得其实是期望不是蒙特卡洛积分。
+
+我们根据不同的粗糙度对贴图做pre-filter，并将结果存在prefilteredColor中，其中粗糙度与pre-filter立方体贴图成的mipmap级别成比例其范围是0.0到1.0。最后将得到的prefilteredColor除以样本总权重，这样影响较小(也就是NdotL较小)的采样所占的权重也较小。
 
 ## Capturing pre-filter mipmap levels
 
-剩下要做的是让OpenGL在多个mipmap级别上对具有不同粗糙度值的环境映射进行预过滤。这实际上是相当容易做到与原始设置的辐照度教程:
+剩下要做的就是让OpenGL在多个mipmap级别上对不同粗糙度的环境贴图进行预过滤。这实际上相当容易，只要在[辐照度](https://learnopengl.com/#!PBR/IBL/Diffuse-irradiance)教程的基础上改就可以了:
 
 ```c++
 prefilterShader.use();
@@ -293,35 +295,35 @@ for (unsigned int mip = 0; mip < maxMipLevels; ++mip)
 }
 glBindFramebuffer(GL_FRAMEBUFFER, 0);   
 ```
-这个过程类似于辐照度映射卷积，但这次我们将framebuffer的维度缩放到适当的mipmap尺度，每个mip级别都将维度缩小2。此外，我们在glFramebufferTexture2D的最后一个参数中指定要呈现的mip级别，并将预过滤的粗糙度传递给预过滤器着色器。
+这个过程类似于辐照度贴图卷积，但这次我们将framebuffer的尺寸缩放到适当的mipmap比例，每个mip级别都将尺寸缩小2倍。此外，我们在glFramebufferTexture2D的最后一个参数中指定要渲染的mip级别，并将要pre-filter的粗糙度传递给pre-filter着色器。
 
-这应该会给我们一个适当的预过滤的环境映射，返回更模糊的反射，我们从更高的mip级别访问它。如果我们在skybox着色器中显示预过滤的环境cubemap，并在其着色器中提前采样，使其略高于第一个mip级别，如下所示:
+这应该会给我们一个这样的环境贴图，也就是使用的mip级别越高，贴图看起来越模糊。如果我们使用天空盒着色器展示pre-filtered的环境立方体贴图，并强制使用略高于1级的mip等级，如下所示:
 
 ```glsl
 vec3 envColor = textureLod(environmentMap, WorldPos, 1.2).rgb; 
 ```
-我们得到的结果看起来确实像是原始环境的模糊版本:
+我们得到的结果看起来就像是原始环境的模糊版本:
 
 ![](../img/pbr/ibl_prefilter_map_sample.png)
 
-如果它看起来有点类似，那么您已经成功地预过滤了HDR环境映射。尝试使用不同的mipmap级别，可以看到预过滤器映射随着mip级别的增加逐渐从锐化到模糊的反射。
+如果它看起来和上图类似，那么您已经成功地pre-filtered了HDR环境贴图。尝试使用不同的mipmap级别，可以看到pre-filterd贴图随着mip级别的增加，逐渐从锐化到模糊。
 
-## Pre-filter convolution artifacts
+## Pre-filter卷积伪影
 
-虽然当前预过滤器映射在大多数情况下都可以正常工作，但是迟早会遇到一些与预过滤器卷积直接相关的呈现构件。我将在这里列出最常见的，包括如何修复它们。
+虽然当前预过滤器映射在大多数情况下都可以正常工作，但很快你就会遇到一些与pre-filter卷积直接相关的伪影。我将在这里列出最常见的伪影，包括如何修复它们。
 
 ## 立方体贴图在高粗糙度下的接缝
 
-在粗糙表面上采样预过滤器映射意味着在其较低的mip级别上采样预过滤器映射。在采样cubemap时，OpenGL默认情况下不会对cubemap的各个面进行线性插值。由于较低的mip水平同时具有较低的分辨率，且预滤波映射与较大的样本瓣卷积，因此很明显缺乏立方面间滤波:
+在粗糙的表面上采样pre-filter贴图，意味着在其较低的mip级别上采样。在采样立方体贴图时，OpenGL默认情况下不会对立方体贴图各个面的接缝处进行线性插值。由于较低的mip水平同时具有较低的分辨率，且pre-filter贴图由较大的波瓣卷积而得，因此立方体各个面的接缝处缺乏过滤变得非常明显:
 
 ![](../img/pbr/ibl_prefilter_seams.png)
 
-幸运的是，OpenGL为我们提供了一个选项，可以通过启用来正确地过滤cubemap面GL_TEXTURE_CUBE_MAP_SEAMLESS:
+幸运的是，OpenGL为我们提供了一个选项，通过使能GL_TEXTURE_CUBE_MAP_SEAMLESS就可以正确地对立方体贴图的表面作过滤:
 
 ```c++
 glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);  
 ```
-只要在应用程序开始时启用此属性，接缝就会消失。
+只要在程序开头使能这个属性，接缝就会消失。
 
 ## pre-filter卷积中的亮斑
 
