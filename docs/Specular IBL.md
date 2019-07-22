@@ -310,28 +310,28 @@ vec3 envColor = textureLod(environmentMap, WorldPos, 1.2).rgb;
 
 ## Pre-filter卷积伪影
 
-虽然当前预过滤器映射在大多数情况下都可以正常工作，但很快你就会遇到一些与pre-filter卷积直接相关的伪影。我将在这里列出最常见的伪影，包括如何修复它们。
+虽然当前pre-filter贴图在大多数情况下都可以正常工作，但很快你就会遇到一些与pre-filter卷积直接相关的伪影。我将在这里列出最常见的伪影，包括如何修复它们。
 
 ## 立方体贴图在高粗糙度下的接缝
 
-在粗糙的表面上采样pre-filter贴图，意味着在其较低的mip级别上采样。在采样立方体贴图时，OpenGL默认情况下不会对立方体贴图各个面的接缝处进行线性插值。由于较低的mip水平同时具有较低的分辨率，且pre-filter贴图由较大的波瓣卷积而得，因此立方体各个面的接缝处缺乏过滤变得非常明显:
+在粗糙的表面上采样pre-filter贴图，意味着在其较低的mip级别上采样。在采样立方体贴图时，OpenGL默认情况下不会对立方体贴图各个面的接缝处进行线性插值。由于pre-filter贴图由较大的波瓣卷积而得，且较低的mip水平同时具有较低的分辨率，因此立方体各个面的接缝处缺乏过滤变得非常明显:
 
 ![](../img/pbr/ibl_prefilter_seams.png)
 
-幸运的是，OpenGL为我们提供了一个选项，通过使能GL_TEXTURE_CUBE_MAP_SEAMLESS就可以正确地对立方体贴图的表面作过滤:
+幸运的是，OpenGL为我们提供了一个选项，通过启用GL_TEXTURE_CUBE_MAP_SEAMLESS就可以正确地对立方体贴图的表面作过滤:
 
 ```c++
 glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);  
 ```
-只要在程序开头使能这个属性，接缝就会消失。
+只要在程序开头启用这个属性，接缝就会消失。
 
 ## pre-filter卷积中的亮斑
 
-由于高频率细节和高光反射中光强的剧烈变化，对高光反射进行卷积需要大量的样本才能很好地解释HDR环境反射的剧烈变化。我们已经采集了大量的样本，但在一些环境中，在一些较粗糙的mip水平上，这可能还不够，在这种情况下，你会开始看到明亮区域周围出现了点状图案:
+对于高频率细节和镜面反射中光强的剧烈变化的部分，我们需要对镜面反射大量采样才能卷积得到较好的HDR环境贴图的剧烈变化的部分。虽然我们已经采集了大量的样本，但在一些环境中，比如一些较粗糙的mip水平上，这可能还不够，在这种情况下，你会开始看到明亮区域周围出现了点状图案:
 
 ![](../img/pbr/ibl_prefilter_dots.png)
 
-一种选择是进一步增加样本数量，但这并不足以适用于所有环境。如[Chetan Jags](https://chetanjags.wordpress.com/2015/08/26/image-based-lighting/)所述，我们可以通过(在预滤波卷积过程中)不直接对环境图进行采样，而是根据积分的PDF和粗糙度对环境图进行mip级采样来减少这种伪像:
+一种选择是进一步增加样本数量，但这并不适用于所有环境。如[Chetan Jags](https://chetanjags.wordpress.com/2015/08/26/image-based-lighting/)所述，我们可以通过(在预滤波卷积过程中)不直接对环境贴图进行采样，而是根据PDF的积分值和粗糙度对环境图的mip级别进行采样来减少这种伪像:
 
 ```glsl
 float D   = DistributionGGX(NdotH, roughness);
@@ -343,13 +343,13 @@ float saSample = 1.0 / (float(SAMPLE_COUNT) * pdf + 0.0001);
 
 float mipLevel = roughness == 0.0 ? 0.0 : 0.5 * log2(saSample / saTexel); 
 ```
-别忘了在环境地图上启用三线性滤波功能，你可从以下资料选取该地图的mip级别:
+别忘了在你要采样的mip级别的环境贴图上启用三线性滤波功能:
 
 ```c++
 glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
 glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR); 
 ```
-设置cubemap的基本纹理后，让OpenGL生成mipmaps:
+设置立方体贴图的基本纹理后，让OpenGL生成mipmaps:
 
 ```c++
 // convert HDR equirectangular environment map to cubemap equivalent
@@ -358,23 +358,23 @@ glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LIN
 glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
 glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
 ```
-这工作得出奇的好，应该删除大部分，如果不是全部，点在你的预过滤器映射粗糙的表面。
+这段代码效果应该非常不错，能移除掉大部分预过滤环境贴图粗糙表面上的亮斑。
 
 ## 预计算BRDF
 
-随着预过滤环境的启动和运行，我们可以专注于裂和近似的第二部分:BRDF。让我们再次简要回顾一下高光分裂和近似:
+随着处理完了预过滤环境，我们可以专注于第二部分的split-sum approximation：BRDF。让我们再次简要回顾一下镜面split-sum approximation:
 
 $$L_o(p,\omega_o) = \int\limits_{\Omega} L_i(p,\omega_i) d\omega_i*\int\limits_{\Omega} f_r(p, \omega_i,\omega_o) n \cdot \omega_i d\omega_i$$
 
-我们已经预先计算了不同粗糙度下预滤波映射中分割和近似的左边部分。要求我们旋卷双向反射方程右边的角n⋅ωo,表面粗糙度和菲涅耳F0。这类似于将高光BRDF与纯白色环境或1.0的恒定亮度Li集成在一起。将BRDF / 3个变量卷积有点多，但是我们可以将F0移出镜面BRDF方程:
+我们已经预先计算了不同粗糙度下预滤波贴图中split-sum approximation的左边部分。右边部分要求我们基于$n\cdot\omega_o$、表面粗糙度和菲涅耳$F_0$对BRDF做卷积。这类似于将镜面BRDF与纯白的环境或恒为1.0的亮度$Li$进行积分。BRDF基于3个变量卷积，变量数有点多，但是我们可以将$F_0$移出镜面BRDF方程:
 
 $$\int\limits_{\Omega} f_r(p, \omega_i, \omega_o) n \cdot \omega_i d\omega_i = \int\limits_{\Omega} f_r(p, \omega_i, \omega_o) \frac{F(\omega_o, h)}{F(\omega_o, h)} n \cdot \omega_i d\omega_i$$
 
-F是菲涅耳方程。将菲涅耳分母移动到BRDF，得到如下等价方程:
+$F$是菲涅耳方程。将菲涅耳分母移动到BRDF，得到如下等价方程:
 
 $$\int\limits_{\Omega} \frac{f_r(p, \omega_i, \omega_o)}{F(\omega_o, h)} F(\omega_o, h)  n \cdot \omega_i d\omega_i$$
 
-用Fresnel-Schlick近似代替最右边的\(F\)得到:
+用Fresnel-Schlick近似代替最右边的$F$得到:
 
 $$\int\limits_{\Omega} \frac{f_r(p, \omega_i, \omega_o)}{F(\omega_o, h)} (F_0 + (1 - F_0){(1 - \omega_o \cdot h)}^5)  n \cdot \omega_i d\omega_i$$
 
@@ -386,19 +386,19 @@ $$\int\limits_{\Omega} \frac{f_r(p, \omega_i, \omega_o)}{F(\omega_o, h)} (F_0 + 
 
 $$\int\limits_{\Omega} \frac{f_r(p, \omega_i, \omega_o)}{F(\omega_o, h)} (F_0 * (1 - \alpha) + \alpha)  n \cdot \omega_i d\omega_i$$
 
-然后我们将菲涅耳函数$F$除以两个积分:
+然后我们将菲涅耳函数$F$拆成两个积分:
 
 $$\int\limits_{\Omega} \frac{f_r(p, \omega_i, \omega_o)}{F(\omega_o, h)} (F_0 * (1 - \alpha))  n \cdot \omega_i d\omega_i+\int\limits_{\Omega} \frac{f_r(p, \omega_i, \omega_o)}{F(\omega_o, h)} (\alpha)  n \cdot \omega_i d\omega_i$$
 
-这样，$F_0$在积分上是常数我们可以把$F_0$从积分中提出来。接下来,我们用$\alpha$回原来形式给我们最终的分割和双向反射方程:
+这样，$F_0$在积分上是常数我们可以把$F_0$从积分中提出来。接下来,我们把$\alpha$代回原来形式得到我们最终的split sum BRDF方程:
 
 $$F_0 \int\limits_{\Omega} f_r(p, \omega_i, \omega_o)(1 - {(1 - \omega_o \cdot h)}^5)  n \cdot \omega_i d\omega_i+\int\limits_{\Omega} f_r(p, \omega_i, \omega_o) {(1 - \omega_o \cdot h)}^5  n \cdot \omega_i d\omega_i$$
 
-得到的两个积分分别表示一个尺度和一个偏置到$F_0$。注意,为$f(p,\omega_i,\omega_o)$已经包含一个术语$F$他们都消掉了,删除从f。
+得到的两个积分分别表示对$F_0$的比例和偏置。注意，为$f(p,\omega_i,\omega_o)$已经包含一个$F$项，把他们从$f$中消掉。
 
-以类似的方式早些时候复杂的环境地图,我们可以在他们的输入:旋卷双向反射方程n和ωo粗糙度之间的角度,并将复杂的结果存储在一个纹理。我们将卷积结果存储在2D查找纹理(LUT)中，称为BRDF集成映射，稍后我们将在PBR灯光着色器中使用它来获得最终的卷积间接高光结果。
+与预卷积环境贴图类似，输入$n$和$\omega_o$之间的夹角和粗糙度，我们可以对BRDF等式作卷积，并将卷积的结果存储在一个纹理里。我们将卷积结果存储在2D的LUT贴图中，称为BRDF积分贴图，稍后我们将在PBR光照着色器中使用它，来获得最终的间接高光的卷积结果。
 
-BRDF卷积着色器在二维平面上运行，使用其二维纹理坐标直接作为BRDF卷积(NdotV和粗糙度)的输入。卷积码在很大程度上类似于预滤波卷积，只是它现在根据我们的BRDF几何函数和Fresnel-Schlick近似处理样本向量:
+BRDF卷积着色器工作在2D平面上，我们直接使用它的纹理坐标作为BRDF卷积(NdotV和粗糙度)的输入。这部分代码很类似预滤波卷积，只是它现在处理样本向量根据我们的BRDF几何函数和Fresnel-Schlick近似函数:
 
 ```glsl
 vec2 IntegrateBRDF(float NdotV, float roughness)
@@ -445,15 +445,15 @@ void main()
     FragColor = integratedBRDF;
 }
 ```
-正如你所看到的BRDF卷积是从数学到代码的直接转换。我们取角θ和粗糙度作为输入,生成一个与重要性抽样样本向量,流程在几何和派生的菲涅耳的人,和输出规模和偏见为每个样本,F0平均他们最后。
+正如你所看到的，BRDF卷积代码就是直接从数学公式转换过来的。我们输入角度$\theta$和粗糙度，使用重要性采样生成一个样本向量，将菲涅尔项提取到BRDF外，再基于几何项，输出$F_0$的比例值和偏移值，最后将他们取平均。
 
-您可能已经从理论教程中回忆起，当与IBL一起作为其k变量使用时，BRDF的几何项略有不同，其解释略有不同:
+您可能已经从教程[理论](https://learnopengl.com/#!PBR/Theory)中回忆起，当与IBL一起作为其$k$变量使用时，BRDF的几何项略有不同，其解释也略有不同:
 
 $$k_{direct} = \frac{(\alpha + 1)^2}{8}$$
 
 $$k_{IBL} = \frac{\alpha^2}{2}$$
 
-由于BRDF卷积是高光IBL积分的一部分，我们将对Schlick-GGX几何函数使用kIBL:
+由于BRDF卷积是镜面IBL积分的一部分，我们将对Schlick-GGX几何函数使用$k_{IBL}$:
 
 ```glsl
 float GeometrySchlickGGX(float NdotV, float roughness)
@@ -477,7 +477,7 @@ float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
     return ggx1 * ggx2;
 }  
 ```
-注意，当k取a为参数时我们并没有像我们最初做的那样平方粗糙度;很可能a已经平方了。我不确定这是Epic Games的部分还是原始的Disney paper的不一致，但是直接将roughness转换为a得到了与Epic Games版本相同的BRDF集成地图。
+注意，当$k$取a为参数时我们并没有像我们最初做的那样平方粗糙度;很可能a已经平方了。我不确定这是Epic Games的部分还是原始的Disney paper的不一致，但是直接将roughness转换为a作为BRDF积分贴图的参数，是与Epic Games的做法一致的。
 
 ```c++
 unsigned int brdfLUTTexture;
