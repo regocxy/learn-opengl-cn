@@ -297,7 +297,7 @@ glBindFramebuffer(GL_FRAMEBUFFER, 0);
 ```
 这个过程类似于辐照度贴图卷积，但这次我们将framebuffer的尺寸缩放到适当的mipmap比例，每个mip级别都将尺寸缩小2倍。此外，我们在glFramebufferTexture2D的最后一个参数中指定要渲染的mip级别，并将要pre-filter的粗糙度传递给pre-filter着色器。
 
-这应该会给我们一个这样的环境贴图，也就是使用的mip级别越高，贴图看起来越模糊。如果我们使用天空盒着色器展示pre-filtered的环境立方体贴图，并强制使用略高于1级的mip等级，如下所示:
+这应该会给我们一个这样的环境贴图，也就是使用的mip级别越a高，贴图看起来越模糊。如果我们使用天空盒着色器展示pre-filtered的环境立方体贴图，并强制使用略高于1级的mip等级，如下所示:
 
 ```glsl
 vec3 envColor = textureLod(environmentMap, WorldPos, 1.2).rgb; 
@@ -447,7 +447,7 @@ void main()
 ```
 正如你所看到的，BRDF卷积代码就是直接从数学公式转换过来的。我们输入角度$\theta$和粗糙度，使用重要性采样生成一个样本向量，将菲涅尔项提取到BRDF外，再基于几何项，输出$F_0$的比例值和偏移值，最后将他们取平均。
 
-您可能已经从教程[理论](https://learnopengl.com/#!PBR/Theory)中回忆起，当与IBL一起作为其$k$变量使用时，BRDF的几何项略有不同，其解释也略有不同:
+您可能已经从教程[理论](https://learnopengl.com/#!PBR/Theory)中回忆起，BRDF的几何与IBL中的项略有不同，其变量$k$的解释也略有不同:
 
 $$k_{direct} = \frac{(\alpha + 1)^2}{8}$$
 
@@ -477,8 +477,9 @@ float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
     return ggx1 * ggx2;
 }  
 ```
-注意，当$k$取a为参数时我们并没有像我们最初做的那样平方粗糙度;很可能a已经平方了。我不确定这是Epic Games的部分还是原始的Disney paper的不一致，但是直接将roughness转换为a作为BRDF积分贴图的参数，是与Epic Games的做法一致的。
+注意，当$k$取a为参数时，我们之前并没有对a取roughness的平方，因为a已经取平方了。我不确定Epic Games的这部分代码和原始的Disney论文是否一致，但是直接将roughness转换为a作为BRDF积分贴图的参数，与Epic Games的做法是一致的。
 
+最后，为了存储BRDF的卷积结果，我们生成了一张512*512分辨率的2D纹理。
 ```c++
 unsigned int brdfLUTTexture;
 glGenTextures(1, &brdfLUTTexture);
@@ -491,9 +492,9 @@ glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR); 
 ```
-注意，我们使用了Epic Games推荐的16位精度浮点格式。确保将包装模式设置为GL_CLAMP_TO_EDGE，以防止边缘采样工件。
+注意，我们使用了Epic Games推荐的16位精度浮点格式。确保将wrapping模式设置为GL_CLAMP_TO_EDGE，以防止边缘采样伪像。
 
-然后，我们重用相同的framebuffer对象，并运行这个着色器在NDC屏幕空间四分之一:
+然后，我们重用framebuffer对象，让处于NDC(标准化设备坐标)屏幕空间下的四边形运行这个着色器：
 
 ```c++
 glBindFramebuffer(GL_FRAMEBUFFER, captureFBO);
@@ -508,21 +509,21 @@ RenderQuad();
 
 glBindFramebuffer(GL_FRAMEBUFFER, 0);  
 ```
-分割和积分的卷积BRDF部分应该会得到以下结果:
+得到split sum BRDF的卷积部分的结果如下:
 
 ![](../img/pbr/ibl_brdf_lut.png)
 
-利用预滤波环境图和BRDF二维LUT，我们可以根据分割和近似重新构造间接高光积分。合成的结果就像间接或周围的镜面光。
+利用预滤波环境贴图和BRDF的2D LUT，我们可以根据Split Sum Approximation重新构造出间接镜面积分。合成的结果就像间接或环境的镜面光。
 
-## Completing the IBL reflectance
+## 完成IBL反射
 
-为了得到反射方程的间接镜面部分，我们需要将分割和近似的两部分缝合在一起。让我们开始添加预先计算的照明数据到我们的PBR着色器顶部:
+为了得到反射方程的间接镜面部分，我们需要将Split Sum Approximation的两部分结合一起。我们先将光照数据添加到PBR着色器的开头：
 
 ```glsl
 uniform samplerCube prefilterMap;
 uniform sampler2D   brdfLUT;  
 ```
-首先，利用反射矢量对预滤波后的环境图进行采样，得到表面的间接镜面反射。注意，我们根据表面粗糙度采样适当的mip水平，使粗糙表面的镜面反射更加模糊。
+首先，利用反射向量对预滤波后的环境贴图进行采样，得到表面的间接镜面反射。注意，我们根据表面粗糙度采样相应的mip级别，越粗糙的表面镜面反射越模糊。
 
 ```glsl
 void main()
@@ -535,18 +536,18 @@ void main()
     [...]
 }
 ```
-在预过滤器步骤中，我们只对环境映射进行了最大5个mip级别的卷积(0到4)，这里我们将其表示为MAX_REFLECTION_LOD，以确保我们不会在没有(相关)数据的情况下采样mip级别。
+在预过滤器步骤中，我们只对环境贴图作了最大5个mip级别的卷积(0到4)，这里我们将其表示为MAX_REFLECTION_LOD，以确保我们不会对没有数据的mip级别进行采样。
 
-然后我们从BRDF查找纹理样本给定材料的粗糙度和法线与视图向量之间的角度:
+然后给定材料的粗糙度和法线与视图向量之间的夹角，我们对BRDF查找纹理进行采样:
 
 ```glsl
 vec3 F        = FresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness);
 vec2 envBRDF  = texture(brdfLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
 vec3 specular = prefilteredColor * (F * envBRDF.x + envBRDF.y);
 ```
-给定F0的比例和偏差(这里我们直接使用BRDF查找纹理的间接菲涅耳结果F)，我们将其与IBL反射率方程的左预滤波部分结合起来，并将近似积分结果重新构造为镜面。
+从BRDF的查找纹理中得到$F_0$(这里我们直接使用间接菲涅耳结果$F$)的比例和偏差，我们把他们与IBL反射方程左边的预滤波部分(prefilteredColor)相结合，重新构造得到近似积分结果为specular。
 
-这给出了反射率方程的间接镜面部分。现在，结合上个教程中反射方程的漫反射部分，我们得到了完整的PBR IBL结果:
+这样就给出了反射方程的间接镜面部分。现在，结合[上篇教程](https://learnopengl.com/#!PBR/IBL/Diffuse-irradiance)中反射方程的漫反射部分，我们得到了完整的PBR IBL结果:
 
 ```glsl
 vec3 F = FresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness);
@@ -565,35 +566,35 @@ vec3 specular = prefilteredColor * (F * envBRDF.x + envBRDF.y);
   
 vec3 ambient = (kD * diffuse + specular) * ao; 
 ```
-注意我们没有用k乘以镜面因为我们已经有了菲涅耳乘法。
+注意，我们没有用kS乘以specular，因为菲涅耳部分已经包含了kS。
 
-现在，在一系列不同粗糙度和金属属性的球体上运行这个精确的代码，我们终于可以在最终的PBR渲染器中看到它们的真实颜色:
+现在，在这组不同粗糙度和金属度的球体上运行这段代码，我们终于可以在PBR渲染器中看到它们的真实颜色:
 
 ![](../img/pbr/ibl_specular_result.png)
 
-我们甚至可以使用一些很酷的纹理PBR材料:
+我们甚至可以使用一些包含纹理的PBR材质，看起来非常炫酷：
 
 ![](../img/pbr/ibl_specular_result_textured.png)
 
-或加载这个可怕的免费PBR 3D模型由安德鲁Maximov:
+或加载这个由Andrew Maximov制作的[免费炫酷的PBR 3D模型](http://artisaverb.info/PBT.html)：
 
 ![](../img/pbr/ibl_specular_result_model.png)
 
-我相信我们都同意现在我们的灯光看起来更有说服力。更棒的是，不管我们使用的是哪种环境映射，我们的照明看起来都是物理上正确的。下面您将看到几个不同的预先计算的HDR地图，完全改变了照明动力学，但仍然看起来物理正确，没有改变一个照明变量!
+我相信我们都会同意现在我们的灯光看起来更加地真实。更棒的是，不管我们使用的是哪种环境贴图，我们的光照看起来都是物理正确的。下面您将看到几张不同的预计算的HDR贴图，完全改变了光照的类型，即使我们没有修改一个光照参数，看起来仍然是物理正确的!
 
 ![](../img/pbr/ibl_specular_result_different_environments.png)
 
-好吧，这次PBR探险是一次相当长的旅程。这里有很多步骤，因此，如果你被卡住了，或者在评论中检查和询问，那么在球面场景或纹理场景代码示例(包括所有着色器)中，有很多可能会出错。
+好吧，这次PBR的探索是一次相当长的旅程。这里有很多步骤并且很容易出错，因此，学习[sphere scene](https://learnopengl.com/code_viewer_gh.php?code=src/6.pbr/2.2.1.ibl_specular/ibl_specular.cpp)或者[textured scene](https://learnopengl.com/code_viewer_gh.php?code=src/6.pbr/2.2.2.ibl_specular_textured/ibl_specular_textured.cpp)示例代码时，需要非常仔细，如果你被卡住了，可以在查看下评论或留言提问。
 
 ## 接下来是什么
 
-希望到本教程结束时，您已经非常清楚地理解了PBR是什么，甚至已经有了一个实际的PBR呈现器并正在运行。在这些教程中，我们在应用程序开始时，即渲染循环之前，预先计算了所有相关的基于PBR图像的照明数据。这对于教育目的来说很好，但是对于PBR的实际应用来说就不太好了。首先，预计算实际上只需要执行一次，而不是在每次启动时。其次，当你使用多个环境映射时你必须在每次启动时预先计算好每一个环境映射，因为每次启动时，环境映射都会不断增加。
+希望到本教程结束时，您已经非常清楚地理解了PBR是什么了，甚至已经实现了一个能用的PBR渲染器。在这些教程中，在渲染循环之前，我们预计算了所有相关的基于PBR图像的光照数据。如果仅仅拿来做教程还不错，但在实际应用中就合适了。首先，预计算实际上只需要执行一次，而不用每次启动时都算一遍。其次，当你使用多张环境贴图时你必须在每次启动时对每一张环境贴图都作预计算，这样会特别耗时。
 
-由于这个原因，通常只需将环境映射预计算到辐照度中，并预过滤映射一次，然后将其存储在磁盘上(注意，BRDF集成映射并不依赖于环境映射，因此只需要计算或加载一次)。这确实意味着您需要提供一种自定义图像格式来存储HDR cubemaps，包括它们的mip级别。或者，您可以将它存储(并加载)为一种可用的格式(比如.dds，它支持存储mip级别)。
+由于这个原因，通常只需对环境贴图作预计算，并将结果存到预过滤的辐照度贴图中，只需一次，然后将它存储在磁盘上(注意，BRDF积分贴图(LUT)并不依赖于环境贴图，因此只需要计算或加载一次)。这确实意味着你需要提供一种自定义图像格式来存储HDR立方体贴图以及它们的mip级别。或者，你可以将它存(并加载)为一种可用的格式(比如.dds，它支持存储mip级别)。
 
-此外，我们在这些教程中描述了整个过程，包括生成预计算的IBL图像，以帮助进一步理解PBR管道。但是，您也可以使用一些很棒的工具，比如[cmftStudio](https://github.com/dariomanesku/cmftStudio)或[IBLBaker](https://github.com/derkreature/IBLBaker)来为您生成这些预先计算好的地图。
+此外，我们在这些教程中描述了整个过程，包括生成预计算的IBL图像，以帮助进一步理解PBR管线。但是，你也可以使用一些很棒的工具，比如[cmftStudio](https://github.com/dariomanesku/cmftStudio)或[IBLBaker](https://github.com/derkreature/IBLBaker)来生成这些预计算贴图。
 
-我们跳过了一个作为反射探针的预先计算的cubemap: cubemap插值和视差校正。这是在场景中放置几个反射探针的过程，这些反射探针在特定位置获取场景的cubemap快照，然后我们可以将这些快照作为场景这部分的IBL数据进行卷积。通过在相机附近的几个探头之间插入，我们可以实现局部高细节的基于图像的照明，而这仅仅受到我们想要放置的反射探头数量的限制。这样，基于图像的照明可以正确地更新时，从一个明亮的室外部分的场景到一个较暗的室内部分。在将来的某个地方，我将编写一个关于反射探测的教程，但是现在，我推荐Chetan Jags在下面撰写的文章，让您有一个良好的开端。
+还有一点，我们跳过了作为反射探针的预计算立方体贴图：立方体贴图插值和视差校正。处理过程是这样的，我们在场景中放置几个反射探针，并且在这些探针的位置获取场景的快照生成立方体贴图，然后我们可以将这些快照作为场景这部分的IBL数据进行卷积。通过对相机附近的几个探头之间进行插值，我们可以得到高清的局部IBL，而这仅仅受到我们想要放置的反射探头数量的限制。这样，当从一个明亮的室外场景移动到一个较暗的室内场景中时，IBL也可以得到正确的更新。将来，我会编写一个关于反射探头的教程，但是现在，我推荐下面Chetan Jags的文章，让你有一个良好的开始。
 
 ## 扩展阅读
 
